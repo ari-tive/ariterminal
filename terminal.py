@@ -20,15 +20,18 @@ GREEN_COLOR = "#3fb950"
 RED_COLOR = "#f85149"
 YELLOW_COLOR = "#d29922"
 PURPLE_COLOR = "#bc8cff"
+BLUE_COLOR = "#58a6ff"
+
 
 # Log Levels Configuration
 LOG_LEVEL_MAP = {
     "ERROR": {"color": RED_COLOR, "keywords": ["ERROR", "FAILED", "EXCEPTION"]},
     "WARN": {"color": YELLOW_COLOR, "keywords": ["WARN", "WARNING"]},
-    "INFO": {"color": ACCENT_COLOR, "keywords": ["INFO", "SUCCESS", "READY"]},
-    "DEBUG": {"color": PURPLE_COLOR, "keywords": ["DEBUG"]},
-    "TRACE": {"color": DIM_COLOR, "keywords": ["TRACE"]}
+    "INFO": {"color": BLUE_COLOR, "keywords": ["INFO", "SUCCESS", "READY"]},
+    "DEBUG": {"color": ACCENT_COLOR, "keywords": ["DEBUG"]},
+    "TRACE": {"color": PURPLE_COLOR, "keywords": ["TRACE"]}
 }
+
 
 class Session:
     def __init__(self, session_id, name, is_admin, cwd):
@@ -238,6 +241,10 @@ class Ariterminal(ctk.CTk):
         
         # Log settings
         self.show_thread_prefix = False
+        
+        # Filter State
+        self.active_filters = {level: True for level in LOG_LEVEL_MAP.keys()}
+        self.filter_btns = {}
 
         ctk.set_appearance_mode("dark")
 
@@ -296,10 +303,14 @@ class Ariterminal(ctk.CTk):
 
         for i, (level, config) in enumerate(LOG_LEVEL_MAP.items()):
             color = config["color"]
-            btn = ctk.CTkButton(self.filter_frame, text=level, width=62, height=26,
-                                fg_color=color, hover_color=color, text_color=BG_COLOR, 
-                                font=("Segoe UI", 9, "bold"), corner_radius=6)
-            btn.grid(row=0, column=i, padx=2)
+            btn = ctk.CTkButton(self.filter_frame, text=level, width=65, height=28,
+                                fg_color="#1a1a1a", border_color=color, border_width=1,
+                                text_color=color, hover_color="#222222",
+                                font=("Segoe UI", 9, "bold"), corner_radius=2,
+                                command=lambda l=level: self.toggle_filter(l))
+            btn.grid(row=0, column=i, padx=3)
+            self.filter_btns[level] = btn
+
 
 
         # ─── MAIN AREA ────────────────────────────────────
@@ -485,14 +496,30 @@ class Ariterminal(ctk.CTk):
 
     # ─── Display Logic ────────────────────────────────────
 
+    def toggle_filter(self, level):
+        """Toggle a log level filter on/off."""
+        self.active_filters[level] = not self.active_filters[level]
+        btn = self.filter_btns[level]
+        color = LOG_LEVEL_MAP[level]["color"]
+        if self.active_filters[level]:
+            btn.configure(fg_color="#1a1a1a", text_color=color, border_color=color)
+        else:
+            btn.configure(fg_color="transparent", text_color=DIM_COLOR, border_color=DIM_COLOR)
+        self.refresh_output()
+
     def refresh_output(self):
+
         if not self.active_session_id or self.active_session_id not in self.sessions:
             return
         session = self.sessions[self.active_session_id]
         self.output_text.configure(state="normal")
         self.output_text.delete("1.0", "end")
         for log in session.logs:
+            if not self.active_filters.get(log["level"], True):
+                continue
+                
             prefix = f"[{log['timestamp']}] "
+
             if self.show_thread_prefix:
                 prefix += f"[{log.get('thread', 'Main')}/{log['level']}] "
             
@@ -534,17 +561,19 @@ class Ariterminal(ctk.CTk):
         }
         self.sessions[self.active_session_id].logs.append(log_entry)
         
-        prefix = f"[{timestamp}] "
-        if self.show_thread_prefix:
-            prefix += f"[{thread_name}/{level}] "
+        if self.active_filters.get(level, True):
+            prefix = f"[{timestamp}] "
+            if self.show_thread_prefix:
+                prefix += f"[{thread_name}/{level}] "
 
-        self.output_text.configure(state="normal")
-        self.output_text.insert("end", prefix, "dim")
-        self.output_text.insert("end", message + "\n", tag)
-        self.output_text.configure(state="disabled")
-        self.output_text.see("end")
+            self.output_text.configure(state="normal")
+            self.output_text.insert("end", prefix, "dim")
+            self.output_text.insert("end", message + "\n", tag)
+            self.output_text.configure(state="disabled")
+            self.output_text.see("end")
 
         self.log_count = len(self.sessions[self.active_session_id].logs)
+
         self.status_label.configure(text=f"☰ {self.log_count} LINES")
 
 
