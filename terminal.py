@@ -133,7 +133,12 @@ class NewSessionDialog(ctk.CTkToplevel):
         pw, ph = parent.winfo_width(), parent.winfo_height()
         self.geometry(f"+{px + (pw // 2) - 210}+{py + (ph // 2) - 170}")
 
+        self.attributes("-alpha", 0.0)
+
+        self.animate_fade(0, 1)
+
         self.grid_columnconfigure(0, weight=1)
+
 
         header = ctk.CTkFrame(self, fg_color="transparent")
         header.grid(row=0, column=0, pady=(25, 5))
@@ -168,7 +173,25 @@ class NewSessionDialog(ctk.CTkToplevel):
         name = self.name_entry.get().strip() or "Session"
         is_admin = self.admin_var.get()
         self.on_create(name, is_admin)
-        self.destroy()
+        self.close_with_animation()
+
+    def close_with_animation(self):
+        self.animate_fade(1, 0, on_complete=self.destroy)
+
+    def animate_fade(self, start, end, duration=0.4, on_complete=None):
+        steps = 15
+        delay = int((duration * 1000) / steps)
+        delta = (end - start) / steps
+        def step(curr):
+            if (delta > 0 and curr < end) or (delta < 0 and curr > end):
+                new_val = curr + delta
+                self.attributes("-alpha", max(0, min(1, new_val)))
+                self.after(delay, lambda: step(new_val))
+            else:
+                self.attributes("-alpha", end)
+                if on_complete: on_complete()
+        step(start)
+
 
 
 class LogSettingsPopup(ctk.CTkToplevel):
@@ -185,7 +208,11 @@ class LogSettingsPopup(ctk.CTkToplevel):
         # Align right edge with button right edge if possible
         self.geometry(f"280x140+{x - 240}+{y}")
         
+        self.attributes("-alpha", 0.0)
+        self.animate_fade(0, 1)
+
         border_frame = ctk.CTkFrame(self, fg_color=BG_COLOR, border_width=1, border_color=BORDER_COLOR, corner_radius=8)
+
         border_frame.pack(fill="both", expand=True)
 
         header = ctk.CTkLabel(border_frame, text="LOG SETTINGS", font=("Segoe UI", 11, "bold"), 
@@ -212,10 +239,28 @@ class LogSettingsPopup(ctk.CTkToplevel):
         ctk.CTkLabel(text_frame, text="Show [Thread/LEVEL] prefix", font=("Segoe UI", 11), 
                      text_color=DIM_COLOR, anchor="w").pack(fill="x")
 
-        self.bind("<FocusOut>", lambda e: self.destroy())
+        self.bind("<FocusOut>", lambda e: self.close_with_animation())
         self.focus_set()
 
+    def close_with_animation(self):
+        self.animate_fade(1, 0, on_complete=self.destroy)
+
+    def animate_fade(self, start, end, duration=0.3, on_complete=None):
+        steps = 12
+        delay = int((duration * 1000) / steps)
+        delta = (end - start) / steps
+        def step(curr):
+            if (delta > 0 and curr < end) or (delta < 0 and curr > end):
+                new_val = curr + delta
+                self.attributes("-alpha", max(0, min(1, new_val)))
+                self.after(delay, lambda: step(new_val))
+            else:
+                self.attributes("-alpha", end)
+                if on_complete: on_complete()
+        step(start)
+
     def toggle_prefix(self):
+
         self.parent.show_thread_prefix = self.switch.get() == 1
         self.parent.refresh_output()
 
@@ -247,7 +292,8 @@ class Ariterminal(ctk.CTk):
         self.filter_btns = {}
 
         ctk.set_appearance_mode("dark")
-
+        self.attributes("-alpha", 0.0)
+        self.after(100, lambda: self.animate_fade(0, 1))
 
         self.setup_ui()
         self.update_uptime()
@@ -576,8 +622,22 @@ class Ariterminal(ctk.CTk):
 
         self.status_label.configure(text=f"☰ {self.log_count} LINES")
 
+    def animate_fade(self, start, end, duration=0.5, on_complete=None):
+        steps = 20
+        delay = int((duration * 1000) / steps)
+        delta = (end - start) / steps
+        def step(curr):
+            if (delta > 0 and curr < end) or (delta < 0 and curr > end):
+                new_val = curr + delta
+                self.attributes("-alpha", max(0, min(1, new_val)))
+                self.after(delay, lambda: step(new_val))
+            else:
+                self.attributes("-alpha", end)
+                if on_complete: on_complete()
+        step(start)
 
     # ─── Session Management ────────────────────────────────
+
 
     def open_new_session_dialog(self):
         NewSessionDialog(self, self.create_session)
@@ -602,6 +662,9 @@ class Ariterminal(ctk.CTk):
         self.clear_search()
         self.refresh_output()
         self.render_instances()
+        # Session transition fade
+        self.animate_fade(0.4, 1.0, duration=0.3)
+
 
     def render_instances(self):
         for widget in self.session_scroll.winfo_children(): widget.destroy()
