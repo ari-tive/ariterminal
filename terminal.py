@@ -254,26 +254,35 @@ class NewSessionDialog(ctk.CTkToplevel):
         self.bash_path = find_git_bash()
         self.ps_path, self.ps_version = find_powershell()
 
+        # Center and size
+        width, height = 480, 460
         self.update_idletasks()
         px, py = parent.winfo_x(), parent.winfo_y()
         pw, ph = parent.winfo_width(), parent.winfo_height()
-        self.geometry(f"+{px + (pw // 2) - 240}+{py + (ph // 2) - 230}")
+        self.geometry(f"{width}x{height}+{px + (pw // 2) - (width // 2)}+{py + (ph // 2) - (height // 2)}")
 
         self.grid_columnconfigure(0, weight=1)
+        self.grid_rowconfigure(2, weight=1)
 
         # ── Header ──
         header = ctk.CTkFrame(self, fg_color="transparent")
-        header.grid(row=0, column=0, pady=(20, 5))
-        ctk.CTkLabel(header, text="⚡", font=("Roboto", 18)).pack(side="left", padx=(0, 8))
-        ctk.CTkLabel(header, text="NEW SESSION", font=("Roboto", 18, "bold"), text_color=ACCENT_COLOR).pack(side="left")
+        header.grid(row=0, column=0, pady=(20, 5), sticky="ew")
+        header.grid_columnconfigure(0, weight=1)
+        
+        header_inner = ctk.CTkFrame(header, fg_color="transparent")
+        header_inner.pack()
+        ctk.CTkLabel(header_inner, text="⚡", font=("Roboto", 18)).pack(side="left", padx=(0, 8))
+        ctk.CTkLabel(header_inner, text="NEW SESSION", font=("Roboto", 18, "bold"), text_color=ACCENT_COLOR).pack(side="left")
 
-        ctk.CTkLabel(self, text="Choose your shell type", font=("Roboto", 12), text_color=DIM_COLOR).grid(row=1, column=0, pady=(0, 12))
+        ctk.CTkLabel(self, text="Choose your shell type", font=("Roboto", 12), text_color=DIM_COLOR).grid(row=1, column=0, pady=(0, 12), sticky="ew")
 
         # ── 2x2 Card Grid ──
         grid_frame = ctk.CTkFrame(self, fg_color="transparent")
-        grid_frame.grid(row=2, column=0, padx=30)
+        grid_frame.grid(row=2, column=0, padx=30, sticky="nsew")
         grid_frame.grid_columnconfigure(0, weight=1)
         grid_frame.grid_columnconfigure(1, weight=1)
+        grid_frame.grid_rowconfigure(0, weight=1)
+        grid_frame.grid_rowconfigure(1, weight=1)
 
         for idx, opt in enumerate(self.SHELL_OPTIONS):
             row_pos = idx // 2
@@ -282,7 +291,7 @@ class NewSessionDialog(ctk.CTkToplevel):
             is_disabled = (opt["key"] == "BASH" and not self.bash_path)
 
             card = ctk.CTkFrame(grid_frame, fg_color=CARD_COLOR, border_width=2, 
-                                border_color=BORDER_COLOR, corner_radius=6, width=195, height=90)
+                                border_color=BORDER_COLOR, corner_radius=6, width=195, height=95)
             card.grid(row=row_pos, column=col_pos, padx=5, pady=5, sticky="nsew")
             card.grid_propagate(False)
 
@@ -310,20 +319,25 @@ class NewSessionDialog(ctk.CTkToplevel):
             else:
                 # Make card clickable
                 key = opt["key"]
-                for widget in [card, inner, title_row] + list(title_row.winfo_children()) + list(inner.winfo_children()):
-                    widget.bind("<Button-1>", lambda e, k=key: self._select_card(k))
+                # Bind all descendants too
+                def bind_recursive(widget, k):
+                    widget.bind("<Button-1>", lambda e: self._select_card(k))
+                    for child in widget.winfo_children():
+                        bind_recursive(child, k)
+                
+                bind_recursive(card, key)
 
         # ── Session Name Entry ──
         self.name_entry = ctk.CTkEntry(self, placeholder_text="Session Name", width=420, height=38,
                                        fg_color=BG_COLOR, border_color=BORDER_COLOR, corner_radius=2, font=("Roboto", 14))
-        self.name_entry.grid(row=3, column=0, pady=(15, 8))
+        self.name_entry.grid(row=3, column=0, pady=(15, 8), sticky="ew", padx=30)
 
         session_num = len(parent.sessions) + 1
         self.name_entry.insert(0, f"CMD Session {session_num}")
 
         # ── Buttons ──
         btn_frame = ctk.CTkFrame(self, fg_color="transparent")
-        btn_frame.grid(row=4, column=0, pady=(8, 20), padx=30)
+        btn_frame.grid(row=4, column=0, pady=(8, 20), padx=30, sticky="ew")
         btn_frame.grid_columnconfigure(0, weight=1)
         btn_frame.grid_columnconfigure(1, weight=1)
 
@@ -743,13 +757,13 @@ class Ariterminal(ctk.CTk):
 
         # Define tag colors
         for level, config in LOG_LEVEL_MAP.items():
-            self.output_text.tag_config(level.lower(), foreground=config["color"])
+            self.output_text._textbox.tag_config(level.lower(), foreground=config["color"])
         
-        self.output_text.tag_config("dim", foreground=DIM_COLOR)
-        self.output_text.tag_config("cyan", foreground=ACCENT_COLOR)
-        self.output_text.tag_config("default", foreground=TEXT_COLOR)
-        self.output_text.tag_config("search_highlight", background="#7d5800", foreground="#ffffff")
-        self.output_text.tag_config("search_current", background="#e8a317", foreground="#000000")
+        self.output_text._textbox.tag_config("dim", foreground=DIM_COLOR)
+        self.output_text._textbox.tag_config("cyan", foreground=ACCENT_COLOR)
+        self.output_text._textbox.tag_config("default", foreground=TEXT_COLOR)
+        self.output_text._textbox.tag_config("search_highlight", background="#7d5800", foreground="#ffffff")
+        self.output_text._textbox.tag_config("search_current", background="#e8a317", foreground="#000000")
 
     # ─── Search Logic ─────────────────────────────────────
 
