@@ -47,6 +47,8 @@ def find_git_bash():
     paths = [
         r"C:\Program Files\Git\bin\bash.exe",
         r"C:\Program Files (x86)\Git\bin\bash.exe",
+        r"D:\Git\bin\bash.exe",
+        r"D:\Program Files\Git\bin\bash.exe",
         os.path.expandvars(r"%LOCALAPPDATA%\Programs\Git\bin\bash.exe")
     ]
     for p in paths:
