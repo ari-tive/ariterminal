@@ -5,7 +5,7 @@ a = Analysis(
     ['terminal.py'],
     pathex=[],
     binaries=[],
-    datas=[],
+    datas=[('Roboto-Regular.ttf', '.')],
     hiddenimports=[],
     hookspath=[],
     hooksconfig={},

@@ -5,7 +5,56 @@ from datetime import datetime
 import threading
 from typing import Optional
 import tkinter as tk
-from tkinter import colorchooser, simpledialog
+from tkinter import colorchooser, simpledialog, font as tkfont
+
+# Set High DPI Awareness for Sharp Text on Windows
+try:
+    from ctypes import windll
+    # 1 = PROCESS_SYSTEM_DPI_AWARE
+    windll.shcore.SetProcessDpiAwareness(1)
+except Exception:
+    pass
+
+class ToolTip(object):
+    def __init__(self, widget, text='widget info'):
+        self.widget = widget
+        self.text = text
+        self.widget.bind("<Enter>", self.enter)
+        self.widget.bind("<Leave>", self.close)
+        self.tw = None
+
+    def enter(self, event=None):
+        if self.widget.winfo_class() != "Frame" and self.widget.cget("state") != "disabled":
+            pass # Keep going, disabled widgets don't trigger events but frames do.
+            
+        x, y, cx, cy = self.widget.bbox("insert") if hasattr(self.widget, 'bbox') and self.widget.bbox("insert") else (0, 0, 0, 0)
+        x += self.widget.winfo_rootx() + 25
+        y += self.widget.winfo_rooty() + 25
+        self.tw = tk.Toplevel(self.widget)
+        self.tw.wm_overrideredirect(True)
+        self.tw.wm_geometry("+%d+%d" % (x, y))
+        label = tk.Label(self.tw, text=self.text, justify='left',
+                         background="#ffffe0", relief='solid', borderwidth=1,
+                         font=("tahoma", "8", "normal"), fg="black")
+        label.pack(ipadx=1)
+
+    def close(self, event=None):
+        if self.tw:
+            self.tw.destroy()
+            self.tw = None
+
+def find_git_bash():
+    paths = [
+        r"C:\Program Files\Git\bin\bash.exe",
+        r"C:\Program Files (x86)\Git\bin\bash.exe",
+        os.path.expandvars(r"%LOCALAPPDATA%\Programs\Git\bin\bash.exe")
+    ]
+    for p in paths:
+        if os.path.exists(p):
+            return p
+    return None
+
+
 
 # ─── Color Constants ───────────────────────────────────────
 BG_COLOR = "#0d1117"
@@ -34,13 +83,21 @@ LOG_LEVEL_MAP = {
 
 
 class Session:
-    def __init__(self, session_id, name, is_admin, cwd):
+    def __init__(self, session_id, name, is_admin, cwd, shell_type="CMD", bash_path=None):
         self.id = session_id
         self.name = name
         self.is_admin = is_admin
         self.cwd = cwd
+        self.shell_type = shell_type
+        self.bash_path = bash_path
         # Normal = Blue (ACCENT_COLOR), Admin = Red (RED_COLOR)
-        self.color = RED_COLOR if is_admin else ACCENT_COLOR
+        # Git Bash = Orange
+        if shell_type == "Git Bash":
+            self.color = "#f05133"
+        elif is_admin:
+            self.color = RED_COLOR
+        else:
+            self.color = ACCENT_COLOR
         self.group = "Default"
         self.logs = [] # Structured logs: list[dict]
         self.log_count = 0
@@ -55,7 +112,8 @@ class SessionCard(ctk.CTkFrame):
         bg = CARD_COLOR if not is_active else SURFACE_COLOR
         border = session.color if is_active else BORDER_COLOR
         super().__init__(parent, fg_color=bg, border_width=2 if is_active else 1, 
-                         border_color=border, corner_radius=8)
+                         border_color=border, corner_radius=2)
+
         self.session = session
 
         # Make entire card clickable
@@ -66,7 +124,7 @@ class SessionCard(ctk.CTkFrame):
         inner = ctk.CTkFrame(self, fg_color="transparent")
         inner.pack(fill="x", padx=12, pady=10)
         inner.bind("<Button-1>", lambda e: on_click(session.id))
-        inner.bind("<Button-3>", lambda e: on_context(e, session.id))
+        inner.bind("<Button-3>", lambda e: on_context(session.id))
 
         # Top row: status dot + name
         top_row = ctk.CTkFrame(inner, fg_color="transparent")
@@ -75,7 +133,11 @@ class SessionCard(ctk.CTkFrame):
         top_row.bind("<Button-3>", lambda e: on_context(e, session.id))
 
         dot_color = GREEN_COLOR if is_active else DIM_COLOR
-        dot = ctk.CTkLabel(top_row, text="●", font=("Segoe UI", 8), text_color=dot_color, width=12)
+        dot = ctk.CTkLabel(top_row, text="●", font=("Roboto", 12), text_color=dot_color, width=12)
+
+
+
+
         dot.pack(side="left", padx=(0, 6))
         dot.bind("<Button-1>", lambda e: on_click(session.id))
         dot.bind("<Button-3>", lambda e: on_context(e, session.id))
@@ -83,11 +145,26 @@ class SessionCard(ctk.CTkFrame):
         name_text = f"{session.name}"
         if session.is_admin:
             name_text = f"🛡️ {name_text}"
-        name_label = ctk.CTkLabel(top_row, text=name_text, font=("Segoe UI", 12, "bold"), 
+        name_label = ctk.CTkLabel(top_row, text=name_text, font=("Roboto", 14, "bold"), 
+
                                   text_color=session.color)
+
+
+
         name_label.pack(side="left", fill="x", expand=True)
         name_label.bind("<Button-1>", lambda e: on_click(session.id))
         name_label.bind("<Button-3>", lambda e: on_context(e, session.id))
+
+        if session.shell_type == "Git Bash":
+            tag_label = ctk.CTkLabel(top_row, text="BASH", font=("Roboto", 10, "bold"), text_color=BG_COLOR, fg_color=session.color, corner_radius=4, width=34)
+            tag_label.pack(side="right", padx=(5, 0))
+            tag_label.bind("<Button-1>", lambda e: on_click(session.id))
+            tag_label.bind("<Button-3>", lambda e: on_context(e, session.id))
+        elif session.shell_type == "PowerShell":
+            tag_label = ctk.CTkLabel(top_row, text="PS", font=("Roboto", 10, "bold"), text_color=BG_COLOR, fg_color="#012456", corner_radius=4, width=24)
+            tag_label.pack(side="right", padx=(5, 0))
+            tag_label.bind("<Button-1>", lambda e: on_click(session.id))
+            tag_label.bind("<Button-3>", lambda e: on_context(e, session.id))
 
         # Bottom row: directory + uptime
         bottom_row = ctk.CTkFrame(inner, fg_color="transparent")
@@ -100,7 +177,11 @@ class SessionCard(ctk.CTkFrame):
         if short_cwd.startswith(home):
             short_cwd = short_cwd.replace(home, "~")
 
-        dir_label = ctk.CTkLabel(bottom_row, text=f"📁 {short_cwd}", font=("Consolas", 10), text_color=DIM_COLOR)
+        dir_label = ctk.CTkLabel(bottom_row, text=f"📁 {short_cwd}", font=("Roboto", 12), text_color=DIM_COLOR)
+
+
+
+
         dir_label.pack(side="left")
         dir_label.bind("<Button-1>", lambda e: on_click(session.id))
         dir_label.bind("<Button-3>", lambda e: on_context(e, session.id))
@@ -110,7 +191,11 @@ class SessionCard(ctk.CTkFrame):
         hours, mins = divmod(mins, 60)
         uptime_str = f"{hours:02}:{mins:02}:{secs:02}"
         
-        uptime_label = ctk.CTkLabel(bottom_row, text=f"⏱ {uptime_str}", font=("Consolas", 10), text_color=DIM_COLOR)
+        uptime_label = ctk.CTkLabel(bottom_row, text=f"⏱ {uptime_str}", font=("Roboto", 12), text_color=DIM_COLOR)
+
+
+
+
         uptime_label.pack(side="right")
         uptime_label.bind("<Button-1>", lambda e: on_click(session.id))
         uptime_label.bind("<Button-3>", lambda e: on_context(e, session.id))
@@ -120,7 +205,7 @@ class NewSessionDialog(ctk.CTkToplevel):
     def __init__(self, parent, on_create):
         super().__init__(parent)
         self.title("New Session")
-        self.geometry("420x340")
+        self.geometry("420x380")
         self.resizable(False, False)
         self.transient(parent)
         self.grab_set()
@@ -133,65 +218,73 @@ class NewSessionDialog(ctk.CTkToplevel):
         pw, ph = parent.winfo_width(), parent.winfo_height()
         self.geometry(f"+{px + (pw // 2) - 210}+{py + (ph // 2) - 170}")
 
-        self.attributes("-alpha", 0.0)
-
-        self.animate_fade(0, 1)
-
         self.grid_columnconfigure(0, weight=1)
-
 
         header = ctk.CTkFrame(self, fg_color="transparent")
         header.grid(row=0, column=0, pady=(25, 5))
-        ctk.CTkLabel(header, text="⚡", font=("Segoe UI", 22)).pack(side="left", padx=(0, 8))
-        ctk.CTkLabel(header, text="NEW SESSION", font=("Segoe UI", 18, "bold"), text_color=ACCENT_COLOR).pack(side="left")
+        ctk.CTkLabel(header, text="⚡", font=("Roboto", 18)).pack(side="left", padx=(0, 8))
+        ctk.CTkLabel(header, text="NEW SESSION", font=("Roboto", 18, "bold"), text_color=ACCENT_COLOR).pack(side="left")
 
-        ctk.CTkLabel(self, text="Configure your terminal session", font=("Segoe UI", 11), text_color=DIM_COLOR).grid(row=1, column=0, pady=(0, 15))
+        ctk.CTkLabel(self, text="Configure your terminal session", font=("Roboto", 12), text_color=DIM_COLOR).grid(row=1, column=0, pady=(0, 15))
 
         self.name_entry = ctk.CTkEntry(self, placeholder_text="Session Name", width=340, height=38, 
-                                       fg_color=BG_COLOR, border_color=BORDER_COLOR, corner_radius=8)
+                                       fg_color=BG_COLOR, border_color=BORDER_COLOR, corner_radius=2, font=("Roboto", 14))
+
+
+
+
         self.name_entry.insert(0, f"Session {len(parent.sessions) + 1}")
         self.name_entry.grid(row=2, column=0, pady=8)
 
         self.admin_var = ctk.BooleanVar(value=False)
         self.admin_check = ctk.CTkCheckBox(self, text="  Run as Administrator", variable=self.admin_var,
-                                           fg_color=ACCENT_COLOR, hover_color=ACCENT_HOVER, border_color=BORDER_COLOR,
-                                           font=("Segoe UI", 12))
+                                           fg_color=ACCENT_COLOR, hover=False, border_color=BORDER_COLOR,
+                                           font=("Roboto", 14))
+
+
+
+
         self.admin_check.grid(row=3, column=0, pady=12)
 
+        self.shell_var = ctk.StringVar(value="CMD")
+        shell_frame = ctk.CTkFrame(self, fg_color="transparent")
+        shell_frame.grid(row=4, column=0, pady=4)
+        
+        ctk.CTkLabel(shell_frame, text="Shell Type:", font=("Roboto", 14)).grid(row=0, column=0, padx=10)
+        ctk.CTkRadioButton(shell_frame, text="CMD", variable=self.shell_var, value="CMD").grid(row=0, column=1, padx=5)
+        ctk.CTkRadioButton(shell_frame, text="PowerShell", variable=self.shell_var, value="PowerShell").grid(row=0, column=2, padx=5)
+        
+        bash_wrapper = ctk.CTkFrame(shell_frame, fg_color="transparent")
+        bash_wrapper.grid(row=0, column=3, padx=5)
+        self.bash_radio = ctk.CTkRadioButton(bash_wrapper, text="Git Bash", variable=self.shell_var, value="Git Bash")
+        self.bash_radio.pack()
+        
+        self.bash_path = find_git_bash()
+        if not self.bash_path:
+            self.bash_radio.configure(state="disabled")
+            ToolTip(bash_wrapper, "Git Bash not found. Install from gitscm.com")
+
         btn_frame = ctk.CTkFrame(self, fg_color="transparent")
-        btn_frame.grid(row=4, column=0, pady=(15, 25))
+        btn_frame.grid(row=5, column=0, pady=(15, 25))
 
         ctk.CTkButton(btn_frame, text="CANCEL", width=120, height=38, fg_color="transparent",
-                      border_width=1, border_color=BORDER_COLOR, text_color=DIM_COLOR, corner_radius=8,
-                      hover_color="#21262d", command=self.destroy).pack(side="left", padx=8)
+                      border_width=1, border_color=BORDER_COLOR, text_color=DIM_COLOR, corner_radius=2,
+                      hover=False, command=self.destroy).pack(side="left", padx=8)
 
         ctk.CTkButton(btn_frame, text="⚡ CREATE", width=160, height=38, fg_color=ACCENT_COLOR,
-                      hover_color=ACCENT_HOVER, text_color=BG_COLOR, font=("Segoe UI", 13, "bold"),
-                      corner_radius=8, command=self._on_confirm).pack(side="left", padx=8)
+                      hover=False, text_color=BG_COLOR, font=("Roboto", 14, "bold"),
+
+                      corner_radius=2, command=self._on_confirm).pack(side="left", padx=8)
+
+
+
 
     def _on_confirm(self):
         name = self.name_entry.get().strip() or "Session"
         is_admin = self.admin_var.get()
-        self.on_create(name, is_admin)
-        self.close_with_animation()
-
-    def close_with_animation(self):
-        self.animate_fade(1, 0, on_complete=self.destroy)
-
-    def animate_fade(self, start, end, duration=0.4, on_complete=None):
-        steps = 15
-        delay = int((duration * 1000) / steps)
-        delta = (end - start) / steps
-        def step(curr):
-            if (delta > 0 and curr < end) or (delta < 0 and curr > end):
-                new_val = curr + delta
-                self.attributes("-alpha", max(0, min(1, new_val)))
-                self.after(delay, lambda: step(new_val))
-            else:
-                self.attributes("-alpha", end)
-                if on_complete: on_complete()
-        step(start)
-
+        shell_type = self.shell_var.get()
+        self.on_create(name, is_admin, shell_type, self.bash_path)
+        self.destroy()
 
 
 class LogSettingsPopup(ctk.CTkToplevel):
@@ -208,15 +301,15 @@ class LogSettingsPopup(ctk.CTkToplevel):
         # Align right edge with button right edge if possible
         self.geometry(f"280x140+{x - 240}+{y}")
         
-        self.attributes("-alpha", 0.0)
-        self.animate_fade(0, 1)
-
         border_frame = ctk.CTkFrame(self, fg_color=BG_COLOR, border_width=1, border_color=BORDER_COLOR, corner_radius=8)
-
         border_frame.pack(fill="both", expand=True)
 
-        header = ctk.CTkLabel(border_frame, text="LOG SETTINGS", font=("Segoe UI", 11, "bold"), 
+        header = ctk.CTkLabel(border_frame, text="LOG SETTINGS", font=("Roboto", 16, "bold"), 
+
                               text_color=TEXT_COLOR, anchor="w")
+
+
+
         header.pack(fill="x", padx=15, pady=(15, 5))
         
         ctk.CTkFrame(border_frame, height=1, fg_color=BORDER_COLOR).pack(fill="x", padx=15, pady=5)
@@ -234,37 +327,65 @@ class LogSettingsPopup(ctk.CTkToplevel):
         text_frame = ctk.CTkFrame(row, fg_color="transparent")
         text_frame.pack(side="left", padx=12)
         
-        ctk.CTkLabel(text_frame, text="Thread Prefix", font=("Segoe UI", 13, "bold"), 
+        ctk.CTkLabel(text_frame, text="Thread Prefix", font=("Roboto", 14, "bold"), 
                      text_color=TEXT_COLOR, anchor="w").pack(fill="x")
-        ctk.CTkLabel(text_frame, text="Show [Thread/LEVEL] prefix", font=("Segoe UI", 11), 
+        ctk.CTkLabel(text_frame, text="Show [Thread/LEVEL] prefix", font=("Roboto", 12), 
+
                      text_color=DIM_COLOR, anchor="w").pack(fill="x")
 
-        self.bind("<FocusOut>", lambda e: self.close_with_animation())
+
+
+
+        self.bind("<FocusOut>", lambda e: self.destroy())
         self.focus_set()
 
-    def close_with_animation(self):
-        self.animate_fade(1, 0, on_complete=self.destroy)
-
-    def animate_fade(self, start, end, duration=0.3, on_complete=None):
-        steps = 12
-        delay = int((duration * 1000) / steps)
-        delta = (end - start) / steps
-        def step(curr):
-            if (delta > 0 and curr < end) or (delta < 0 and curr > end):
-                new_val = curr + delta
-                self.attributes("-alpha", max(0, min(1, new_val)))
-                self.after(delay, lambda: step(new_val))
-            else:
-                self.attributes("-alpha", end)
-                if on_complete: on_complete()
-        step(start)
-
     def toggle_prefix(self):
-
         self.parent.show_thread_prefix = self.switch.get() == 1
         self.parent.refresh_output()
 
 
+
+class ConfirmDialog(ctk.CTkToplevel):
+    def __init__(self, parent, title, message, on_confirm):
+        super().__init__(parent)
+        self.title(title)
+        self.on_confirm = on_confirm
+        
+        # Center the dialog
+        self.geometry("340x180")
+        self.resizable(False, False)
+        self.configure(fg_color=SURFACE_COLOR)
+        
+        # Ensure it's on top and modal-like
+        self.attributes("-topmost", True)
+        self.grab_set()
+        
+        # Layout
+        border_frame = ctk.CTkFrame(self, fg_color=BG_COLOR, border_width=1, border_color=BORDER_COLOR, corner_radius=8)
+        border_frame.pack(fill="both", expand=True, padx=2, pady=2)
+        
+        header = ctk.CTkLabel(border_frame, text="⚠️ CONFIRMATION", font=("Roboto", 16, "bold"), 
+                              text_color=ACCENT_COLOR, anchor="w")
+        header.pack(fill="x", padx=20, pady=(15, 10))
+        
+        msg_label = ctk.CTkLabel(border_frame, text=message, font=("Roboto", 14), 
+                                 text_color=TEXT_COLOR, wraplength=280)
+        msg_label.pack(fill="x", padx=20, pady=(0, 20))
+        
+        btn_frame = ctk.CTkFrame(border_frame, fg_color="transparent")
+        btn_frame.pack(fill="x", padx=20, pady=(0, 15))
+        
+        ctk.CTkButton(btn_frame, text="NO", width=90, height=34, fg_color=CARD_COLOR,
+                      hover=False, text_color=TEXT_COLOR, font=("Roboto", 14, "bold"),
+                      corner_radius=2, command=self.destroy).pack(side="left", padx=8)
+
+        ctk.CTkButton(btn_frame, text="YES", width=110, height=34, fg_color=ACCENT_COLOR,
+                      hover=False, text_color=BG_COLOR, font=("Roboto", 14, "bold"),
+                      corner_radius=2, command=self._on_confirm).pack(side="left", padx=8)
+
+    def _on_confirm(self):
+        self.on_confirm()
+        self.destroy()
 
 class Ariterminal(ctk.CTk):
     def __init__(self):
@@ -273,6 +394,23 @@ class Ariterminal(ctk.CTk):
         self.title("Ariterminal")
         self.geometry("1200x800")
         self.configure(fg_color=BG_COLOR)
+        
+        # Load Roboto Regular font using Windows API
+        try:
+            import ctypes
+            import sys
+            # Resolve font path for PyInstaller bundle
+            if getattr(sys, 'frozen', False):
+                font_path = os.path.join(sys._MEIPASS, 'Roboto-Regular.ttf')
+            else:
+                font_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'Roboto-Regular.ttf')
+            # FR_PRIVATE = 0x10 — only this process can see the font
+            ctypes.windll.gdi32.AddFontResourceExW(font_path, 0x10, 0)
+        except Exception:
+            pass  # Fallback to default if font fails to load
+
+
+
 
         self.cwd = os.getcwd()
         self.sessions: dict[str, Session] = {}
@@ -292,8 +430,7 @@ class Ariterminal(ctk.CTk):
         self.filter_btns = {}
 
         ctk.set_appearance_mode("dark")
-        self.attributes("-alpha", 0.0)
-        self.after(100, lambda: self.animate_fade(0, 1))
+
 
         self.setup_ui()
         self.update_uptime()
@@ -308,7 +445,11 @@ class Ariterminal(ctk.CTk):
         self.top_bar.grid_columnconfigure(1, weight=1)
 
         self.title_label = ctk.CTkLabel(self.top_bar, text=">_ ARITERMINAL", 
-                                        font=("Consolas", 18, "bold"), text_color=ACCENT_COLOR)
+                                        font=("Roboto", 18, "bold"), text_color=ACCENT_COLOR)
+
+
+
+
         self.title_label.grid(row=0, column=0, padx=25, pady=14)
 
         # Search bar + controls
@@ -316,7 +457,11 @@ class Ariterminal(ctk.CTk):
         self.search_frame.grid(row=0, column=1, padx=10)
 
         self.search_entry = ctk.CTkEntry(self.search_frame, placeholder_text="🔍 Search logs...", width=300, height=34,
-                                         fg_color=BG_COLOR, border_color=BORDER_COLOR, corner_radius=8)
+                                         fg_color=BG_COLOR, border_color=BORDER_COLOR, corner_radius=2, font=("Roboto", 14))
+
+
+
+
         self.search_entry.pack(side="left", padx=(0, 6))
         self.search_entry.bind("<KeyRelease>", lambda e: self.perform_search())
         self.search_entry.bind("<Escape>", lambda e: self.clear_search())
@@ -326,21 +471,33 @@ class Ariterminal(ctk.CTk):
         self.search_count_label.pack(side="left", padx=(0, 4))
 
         self.search_up_btn = ctk.CTkButton(self.search_frame, text="▲", width=28, height=28,
-                                           fg_color=CARD_COLOR, hover_color=BORDER_COLOR, text_color=TEXT_COLOR,
-                                           font=("Segoe UI", 10), corner_radius=6,
+                                           fg_color=CARD_COLOR, hover=False, text_color=TEXT_COLOR,
+                                           font=("Roboto", 12), corner_radius=2,
                                            command=lambda: self.navigate_search(-1))
+
+
+
+
         self.search_up_btn.pack(side="left", padx=1)
 
         self.search_down_btn = ctk.CTkButton(self.search_frame, text="▼", width=28, height=28,
-                                             fg_color=CARD_COLOR, hover_color=BORDER_COLOR, text_color=TEXT_COLOR,
-                                             font=("Segoe UI", 10), corner_radius=6,
+                                             fg_color=CARD_COLOR, hover=False, text_color=TEXT_COLOR,
+                                             font=("Roboto", 12), corner_radius=2,
+
                                              command=lambda: self.navigate_search(1))
+
+
+
         self.search_down_btn.pack(side="left", padx=1)
 
         self.settings_btn = ctk.CTkButton(self.search_frame, text="⚙", width=34, height=34,
-                                          fg_color=CARD_COLOR, hover_color=BORDER_COLOR, text_color=ACCENT_COLOR,
-                                          font=("Segoe UI", 16), corner_radius=8,
+                                          fg_color=CARD_COLOR, hover=False, text_color=ACCENT_COLOR,
+                                          font=("Roboto", 16, "bold"), corner_radius=2,
+
                                           command=lambda: LogSettingsPopup(self, self.settings_btn))
+
+
+
         self.settings_btn.pack(side="left", padx=(10, 0))
 
 
@@ -351,9 +508,14 @@ class Ariterminal(ctk.CTk):
             color = config["color"]
             btn = ctk.CTkButton(self.filter_frame, text=level, width=65, height=28,
                                 fg_color="#1a1a1a", border_color=color, border_width=1,
-                                text_color=color, hover_color="#222222",
-                                font=("Segoe UI", 9, "bold"), corner_radius=2,
+                                text_color=color, hover=False,
+                                font=("Roboto", 14), corner_radius=2,
+
                                 command=lambda l=level: self.toggle_filter(l))
+
+
+
+
             btn.grid(row=0, column=i, padx=3)
             self.filter_btns[level] = btn
 
@@ -371,48 +533,70 @@ class Ariterminal(ctk.CTk):
         self.output_container.grid_columnconfigure(0, weight=1)
         self.output_container.grid_rowconfigure(0, weight=1)
 
-        self.output_text = ctk.CTkTextbox(self.output_container, font=("Consolas", 12), fg_color=BG_COLOR,
-                                          text_color=TEXT_COLOR, border_width=1, border_color=BORDER_COLOR, corner_radius=8)
+        self.output_text = ctk.CTkTextbox(self.output_container, font=("Roboto", 15), fg_color=BG_COLOR,
+
+                                          text_color=TEXT_COLOR, border_width=1, border_color=BORDER_COLOR, corner_radius=2)
+
+
+
         self.output_text.configure(state="disabled")
 
         self.welcome_frame = ctk.CTkFrame(self.output_container, fg_color=BG_COLOR, border_width=1, 
-                                          border_color=BORDER_COLOR, corner_radius=8)
+                                          border_color=BORDER_COLOR, corner_radius=2)
+
         self.welcome_frame.grid(row=0, column=0, sticky="nsew")
 
         self.welcome_inner = ctk.CTkFrame(self.welcome_frame, fg_color="transparent")
         self.welcome_inner.place(relx=0.5, rely=0.45, anchor="center")
 
-        ctk.CTkLabel(self.welcome_inner, text="⚡", font=("Segoe UI", 48)).pack(pady=(0, 10))
-        ctk.CTkLabel(self.welcome_inner, text="No active sessions", font=("Segoe UI", 26, "bold"), 
+        ctk.CTkLabel(self.welcome_inner, text="⚡", font=("Roboto", 28)).pack(pady=(0, 10))
+        ctk.CTkLabel(self.welcome_inner, text="No active sessions", font=("Roboto", 20, "bold"), 
                      text_color=TEXT_COLOR).pack(pady=(0, 6))
         ctk.CTkLabel(self.welcome_inner, text="Create a new terminal session to get started",
-                     font=("Segoe UI", 13), text_color=DIM_COLOR).pack(pady=(0, 30))
+                     font=("Roboto", 14), text_color=DIM_COLOR).pack(pady=(0, 30))
 
-        ctk.CTkButton(self.welcome_inner, text="⚡ New Session", fg_color=ACCENT_COLOR, hover_color=ACCENT_HOVER,
-                      text_color=BG_COLOR, font=("Segoe UI", 15, "bold"), height=48, width=220, corner_radius=10,
+        ctk.CTkButton(self.welcome_inner, text="⚡ New Session", fg_color=ACCENT_COLOR, hover=False,
+                      text_color=BG_COLOR, font=("Roboto", 14, "bold"), height=48, width=220, corner_radius=2,
+
                       command=self.open_new_session_dialog).pack()
+
+
+
 
         # ─── RIGHT PANEL ──────────────────────────────────
         self.instances_panel = ctk.CTkFrame(self.main_container, fg_color=SURFACE_COLOR, border_width=1, 
-                                            border_color=BORDER_COLOR, corner_radius=8, width=260)
+                                            border_color=BORDER_COLOR, corner_radius=2, width=260)
+
         self.instances_panel.grid(row=0, column=1, sticky="nsew")
 
         self.inst_header = ctk.CTkFrame(self.instances_panel, fg_color="transparent")
         self.inst_header.pack(fill="x", padx=14, pady=(14, 8))
 
         self.inst_title = ctk.CTkLabel(self.inst_header, text="🖥  INSTANCES", 
-                                       font=("Segoe UI", 12, "bold"), text_color=ACCENT_COLOR)
+                                       font=("Roboto", 14, "bold"), text_color=ACCENT_COLOR)
+
+
+
+
         self.inst_title.pack(side="left")
 
         self.session_count_badge = ctk.CTkLabel(self.inst_header, text="0", width=24, height=20,
                                                  fg_color=BORDER_COLOR, corner_radius=10,
-                                                 font=("Segoe UI", 10, "bold"), text_color=DIM_COLOR)
+                                                 font=("Roboto", 12, "bold"), text_color=DIM_COLOR)
+
+
+
+
         self.session_count_badge.pack(side="left", padx=(8, 0))
 
         self.add_session_btn = ctk.CTkButton(self.inst_header, text="+", width=30, height=30,
-                                              fg_color=ACCENT_COLOR, hover_color=ACCENT_HOVER,
-                                              text_color=BG_COLOR, font=("Segoe UI", 18, "bold"),
-                                              corner_radius=8, command=self.open_new_session_dialog)
+                                              fg_color=ACCENT_COLOR, hover=False,
+                                              text_color=BG_COLOR, font=("Roboto", 16, "bold"),
+
+                                              corner_radius=2, command=self.open_new_session_dialog)
+
+
+
         self.add_session_btn.pack(side="right")
 
         sep = ctk.CTkFrame(self.instances_panel, height=1, fg_color=BORDER_COLOR)
@@ -427,33 +611,55 @@ class Ariterminal(ctk.CTk):
         self.bottom_bar.grid_columnconfigure(1, weight=1)
 
         self.status_label = ctk.CTkLabel(self.bottom_bar, text="☰ 0 LINES", width=100, text_color=DIM_COLOR, 
-                                         font=("Consolas", 10, "bold"))
+                                         font=("Roboto", 12, "bold"))
+
+
+
+
         self.status_label.grid(row=0, column=0, padx=15)
 
-        self.active_session_label = ctk.CTkLabel(self.bottom_bar, text="", font=("Segoe UI", 10, "bold"), text_color=ACCENT_COLOR)
+        self.active_session_label = ctk.CTkLabel(self.bottom_bar, text="", font=("Roboto", 12, "bold"), text_color=ACCENT_COLOR)
+
+
+
+
         self.active_session_label.grid(row=0, column=1, sticky="w", padx=5)
 
         self.input_frame = ctk.CTkFrame(self.bottom_bar, fg_color=BG_COLOR, border_width=1, 
-                                        border_color=BORDER_COLOR, corner_radius=8)
+                                        border_color=BORDER_COLOR, corner_radius=2)
+
         self.input_frame.grid(row=0, column=2, sticky="ew", padx=15, pady=6)
 
         ctk.CTkLabel(self.input_frame, text="❯", text_color=ACCENT_COLOR, 
-                     font=("Consolas", 14, "bold")).pack(side="left", padx=(10, 4))
+                     font=("Roboto", 14, "bold")).pack(side="left", padx=(10, 4))
+
+
+
+
 
         self.command_entry = ctk.CTkEntry(self.input_frame, fg_color="transparent", border_width=0,
-                                          text_color=TEXT_COLOR, font=("Consolas", 13), 
+                                          text_color=TEXT_COLOR, font=("Roboto", 16), 
+
                                           placeholder_text="Enter command...", height=30)
+
+
+
         self.command_entry.pack(side="left", fill="x", expand=True, padx=(0, 5))
         self.command_entry.bind("<Return>", self.on_enter)
 
         self.clear_btn = ctk.CTkButton(self.bottom_bar, text="🗑 CLEAR", width=85, height=28, fg_color="transparent",
-                                       text_color=DIM_COLOR, hover_color="#21262d", corner_radius=6, command=self.clear_logs)
+                                       text_color=DIM_COLOR, hover=False, corner_radius=2, command=self.clear_logs)
+
         self.clear_btn.grid(row=0, column=3, padx=(0, 15))
 
         # ─── CONTEXT MENU ──────────────────────────────────
         self.context_menu = tk.Menu(self, tearoff=0, bg=SURFACE_COLOR, fg=TEXT_COLOR,
                                     activebackground=ACCENT_COLOR, activeforeground=BG_COLOR,
-                                    font=("Segoe UI", 10), relief="flat", bd=1)
+                                    font=("Roboto", 12), relief="flat", bd=1)
+
+
+
+
         self.context_menu.add_command(label="  ✏️  Rename", command=self.menu_rename)
         self.context_menu.add_command(label="  🎨  Set Color", command=self.menu_set_color)
         self.context_menu.add_command(label="  📁  Group", command=self.menu_group)
@@ -578,8 +784,9 @@ class Ariterminal(ctk.CTk):
 
 
 
-    def write_log(self, message, force_tag=None):
-        if not self.active_session_id:
+    def write_log(self, message, force_tag=None, session_id=None):
+        sid = session_id or self.active_session_id
+        if not sid or sid not in self.sessions:
             return
         level = "INFO"
         tag = "default"
@@ -605,46 +812,32 @@ class Ariterminal(ctk.CTk):
             "message": message, 
             "tag": tag
         }
-        self.sessions[self.active_session_id].logs.append(log_entry)
+        self.sessions[sid].logs.append(log_entry)
         
-        if self.active_filters.get(level, True):
-            prefix = f"[{timestamp}] "
-            if self.show_thread_prefix:
-                prefix += f"[{thread_name}/{level}] "
+        if sid == self.active_session_id:
+            if self.active_filters.get(level, True):
+                prefix = f"[{timestamp}] "
+                if self.show_thread_prefix:
+                    prefix += f"[{thread_name}/{level}] "
 
-            self.output_text.configure(state="normal")
-            self.output_text.insert("end", prefix, "dim")
-            self.output_text.insert("end", message + "\n", tag)
-            self.output_text.configure(state="disabled")
-            self.output_text.see("end")
+                self.output_text.configure(state="normal")
+                self.output_text.insert("end", prefix, "dim")
+                self.output_text.insert("end", message + "\n", tag)
+                self.output_text.configure(state="disabled")
+                self.output_text.see("end")
 
-        self.log_count = len(self.sessions[self.active_session_id].logs)
+            self.log_count = len(self.sessions[sid].logs)
+            self.status_label.configure(text=f"☰ {self.log_count} LINES")
 
-        self.status_label.configure(text=f"☰ {self.log_count} LINES")
-
-    def animate_fade(self, start, end, duration=0.5, on_complete=None):
-        steps = 20
-        delay = int((duration * 1000) / steps)
-        delta = (end - start) / steps
-        def step(curr):
-            if (delta > 0 and curr < end) or (delta < 0 and curr > end):
-                new_val = curr + delta
-                self.attributes("-alpha", max(0, min(1, new_val)))
-                self.after(delay, lambda: step(new_val))
-            else:
-                self.attributes("-alpha", end)
-                if on_complete: on_complete()
-        step(start)
 
     # ─── Session Management ────────────────────────────────
-
 
     def open_new_session_dialog(self):
         NewSessionDialog(self, self.create_session)
 
-    def create_session(self, name, is_admin):
+    def create_session(self, name, is_admin, shell_type="CMD", bash_path=None):
         session_id = f"sess_{datetime.now().timestamp()}"
-        new_session = Session(session_id, name, is_admin, self.cwd)
+        new_session = Session(session_id, name, is_admin, self.cwd, shell_type, bash_path)
         self.sessions[session_id] = new_session
         self.switch_to_session(session_id)
         self.write_log(f"━━━ SESSION STARTED: {name} {'(ADMIN)' if is_admin else ''} ━━━", "cyan")
@@ -662,9 +855,6 @@ class Ariterminal(ctk.CTk):
         self.clear_search()
         self.refresh_output()
         self.render_instances()
-        # Session transition fade
-        self.animate_fade(0.4, 1.0, duration=0.3)
-
 
     def render_instances(self):
         for widget in self.session_scroll.winfo_children(): widget.destroy()
@@ -680,9 +870,13 @@ class Ariterminal(ctk.CTk):
                 if idx > 0: ctk.CTkFrame(self.session_scroll, height=1, fg_color=BORDER_COLOR).pack(fill="x", padx=8, pady=(8, 4))
                 group_header = ctk.CTkFrame(self.session_scroll, fg_color="transparent")
                 group_header.pack(fill="x", padx=8, pady=(8, 4))
-                ctk.CTkLabel(group_header, text="▸", font=("Segoe UI", 10, "bold"), text_color=ACCENT_COLOR).pack(side="left")
-                ctk.CTkLabel(group_header, text=f" {group_name.upper()}", font=("Segoe UI", 10, "bold"), text_color=DIM_COLOR).pack(side="left")
-                ctk.CTkLabel(group_header, text=f"({len(sess_list)})", font=("Segoe UI", 9), text_color=BORDER_COLOR).pack(side="left", padx=(5, 0))
+                ctk.CTkLabel(group_header, text="▸", font=("Roboto", 12, "bold"), text_color=ACCENT_COLOR).pack(side="left")
+                ctk.CTkLabel(group_header, text=f" {group_name.upper()}", font=("Roboto", 12, "bold"), text_color=DIM_COLOR).pack(side="left")
+                ctk.CTkLabel(group_header, text=f"({len(sess_list)})", font=("Roboto", 12), text_color=BORDER_COLOR).pack(side="left", padx=(5, 0))
+
+
+
+
             for sess in sess_list:
                 is_active = sess.id == self.active_session_id
                 card = SessionCard(self.session_scroll, sess, is_active, self.switch_to_session, self.show_context_menu)
@@ -723,7 +917,7 @@ class Ariterminal(ctk.CTk):
         if not s_id or s_id not in self.sessions: return
         old = self.sessions[s_id]
         session_id = f"sess_{datetime.now().timestamp()}"
-        new_session = Session(session_id, f"{old.name} (Copy)", old.is_admin, self.cwd)
+        new_session = Session(session_id, f"{old.name} (Copy)", old.is_admin, self.cwd, old.shell_type, old.bash_path)
         new_session.logs = [log.copy() for log in old.logs]
         new_session.log_count = old.log_count
         new_session.group = old.group
@@ -777,20 +971,33 @@ class Ariterminal(ctk.CTk):
                 self.render_instances()
             except Exception as e: self.write_log(f"cd error: {e}", "red")
             return
-        threading.Thread(target=self.run_process, args=(cmd,), daemon=True).start()
+        threading.Thread(target=self.run_process, args=(cmd, self.active_session_id), daemon=True).start()
 
-    def run_process(self, cmd):
+    def run_process(self, cmd, session_id):
+        session = self.sessions.get(session_id)
+        if not session: return
         try:
-            process = subprocess.Popen(cmd, shell=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, cwd=self.cwd)
+            if session.shell_type == "Git Bash" and session.bash_path:
+                popen_args = [session.bash_path, "--login", "-i", "-c", cmd]
+                process = subprocess.Popen(popen_args, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, cwd=session.cwd)
+            elif session.shell_type == "PowerShell":
+                popen_args = ["powershell.exe", "-Command", cmd]
+                process = subprocess.Popen(popen_args, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, cwd=session.cwd)
+            else:
+                process = subprocess.Popen(cmd, shell=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, cwd=session.cwd)
+                
             stdout, stderr = process.communicate()
             if stdout:
-                for line in stdout.splitlines(): self.write_log(f"  ├── {line}")
+                for line in stdout.splitlines(): self.write_log(f"  ├── {line}", session_id=session_id)
             if stderr:
-                for line in stderr.splitlines(): self.write_log(f"  ├── {line}", "red")
-            if not stdout and not stderr: self.write_log("  └── (no output)", "dim")
-        except Exception as e: self.write_log(f"Execution Error: {e}", "red")
+                for line in stderr.splitlines(): self.write_log(f"  ├── {line}", "red", session_id=session_id)
+            if not stdout and not stderr: self.write_log("  └── (no output)", "dim", session_id=session_id)
+        except Exception as e: self.write_log(f"Execution Error: {e}", "red", session_id=session_id)
 
     def clear_logs(self):
+        ConfirmDialog(self, "Clear Logs", "Are you sure you want to clear the logs for this session?", self._perform_clear_logs)
+
+    def _perform_clear_logs(self):
         if self.active_session_id and self.active_session_id in self.sessions: self.sessions[self.active_session_id].logs = []
         self.output_text.configure(state="normal")
         self.output_text.delete("1.0", "end")
