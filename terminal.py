@@ -54,6 +54,21 @@ def find_git_bash():
             return p
     return None
 
+def find_powershell():
+    """Find PowerShell 7 (pwsh.exe) first, fall back to PowerShell 5."""
+    ps7_paths = [
+        r"C:\Program Files\PowerShell\7\pwsh.exe",
+        r"C:\Program Files (x86)\PowerShell\7\pwsh.exe",
+    ]
+    for p in ps7_paths:
+        if os.path.exists(p):
+            return p, "7"
+    # Fallback to PowerShell 5
+    ps5 = r"C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe"
+    if os.path.exists(ps5):
+        return ps5, "5"
+    return None, None
+
 
 
 # ─── Color Constants ───────────────────────────────────────
@@ -83,17 +98,19 @@ LOG_LEVEL_MAP = {
 
 
 class Session:
-    def __init__(self, session_id, name, is_admin, cwd, shell_type="CMD", bash_path=None):
+    def __init__(self, session_id, name, is_admin, cwd, shell_type="CMD", bash_path=None, ps_path=None):
         self.id = session_id
         self.name = name
         self.is_admin = is_admin
         self.cwd = cwd
         self.shell_type = shell_type
         self.bash_path = bash_path
-        # Normal = Blue (ACCENT_COLOR), Admin = Red (RED_COLOR)
-        # Git Bash = Orange
+        self.ps_path = ps_path
+        # Color per shell type
         if shell_type == "Git Bash":
             self.color = "#f05133"
+        elif shell_type == "PowerShell":
+            self.color = "#012456"
         elif is_admin:
             self.color = RED_COLOR
         else:
@@ -124,7 +141,7 @@ class SessionCard(ctk.CTkFrame):
         inner = ctk.CTkFrame(self, fg_color="transparent")
         inner.pack(fill="x", padx=12, pady=10)
         inner.bind("<Button-1>", lambda e: on_click(session.id))
-        inner.bind("<Button-3>", lambda e: on_context(session.id))
+        inner.bind("<Button-3>", lambda e: on_context(e, session.id))
 
         # Top row: status dot + name
         top_row = ctk.CTkFrame(inner, fg_color="transparent")
@@ -156,12 +173,22 @@ class SessionCard(ctk.CTkFrame):
         name_label.bind("<Button-3>", lambda e: on_context(e, session.id))
 
         if session.shell_type == "Git Bash":
-            tag_label = ctk.CTkLabel(top_row, text="BASH", font=("Roboto", 10, "bold"), text_color=BG_COLOR, fg_color=session.color, corner_radius=4, width=34)
+            tag_label = ctk.CTkLabel(top_row, text="BASH", font=("Roboto", 10, "bold"), text_color=BG_COLOR, fg_color="#f05133", corner_radius=4, width=40)
             tag_label.pack(side="right", padx=(5, 0))
             tag_label.bind("<Button-1>", lambda e: on_click(session.id))
             tag_label.bind("<Button-3>", lambda e: on_context(e, session.id))
         elif session.shell_type == "PowerShell":
-            tag_label = ctk.CTkLabel(top_row, text="PS", font=("Roboto", 10, "bold"), text_color=BG_COLOR, fg_color="#012456", corner_radius=4, width=24)
+            tag_label = ctk.CTkLabel(top_row, text="PS", font=("Roboto", 10, "bold"), text_color="#c9d1d9", fg_color="#012456", corner_radius=4, width=28)
+            tag_label.pack(side="right", padx=(5, 0))
+            tag_label.bind("<Button-1>", lambda e: on_click(session.id))
+            tag_label.bind("<Button-3>", lambda e: on_context(e, session.id))
+        elif session.is_admin:
+            tag_label = ctk.CTkLabel(top_row, text="ADMIN", font=("Roboto", 10, "bold"), text_color=BG_COLOR, fg_color=RED_COLOR, corner_radius=4, width=46)
+            tag_label.pack(side="right", padx=(5, 0))
+            tag_label.bind("<Button-1>", lambda e: on_click(session.id))
+            tag_label.bind("<Button-3>", lambda e: on_context(e, session.id))
+        else:
+            tag_label = ctk.CTkLabel(top_row, text="CMD", font=("Roboto", 10, "bold"), text_color=DIM_COLOR, fg_color=BORDER_COLOR, corner_radius=4, width=34)
             tag_label.pack(side="right", padx=(5, 0))
             tag_label.bind("<Button-1>", lambda e: on_click(session.id))
             tag_label.bind("<Button-3>", lambda e: on_context(e, session.id))
@@ -202,88 +229,135 @@ class SessionCard(ctk.CTkFrame):
 
 
 class NewSessionDialog(ctk.CTkToplevel):
+    SHELL_OPTIONS = [
+        {"key": "CMD",        "icon": "🖥️", "title": "CMD",           "desc": "Command Prompt\nStandard shell",       "is_admin": False, "shell": "CMD"},
+        {"key": "CMD_ADMIN",  "icon": "🛡️", "title": "CMD (Admin)",   "desc": "Elevated privileges\nRun as Admin",     "is_admin": True,  "shell": "CMD"},
+        {"key": "PS",         "icon": "💙", "title": "PowerShell",    "desc": "PowerShell 5/7\nAdvanced scripting",   "is_admin": False, "shell": "PowerShell"},
+        {"key": "BASH",       "icon": "🟠", "title": "Git Bash",      "desc": "Unix-style shell\nGit & bash commands", "is_admin": False, "shell": "Git Bash"},
+    ]
+
     def __init__(self, parent, on_create):
         super().__init__(parent)
         self.title("New Session")
-        self.geometry("420x380")
+        self.geometry("480x460")
         self.resizable(False, False)
         self.transient(parent)
         self.grab_set()
 
         self.on_create = on_create
+        self.parent = parent
         self.configure(fg_color=SURFACE_COLOR)
+        self.selected_key = "CMD"
+        self.card_frames = {}
+
+        # Detect available shells
+        self.bash_path = find_git_bash()
+        self.ps_path, self.ps_version = find_powershell()
 
         self.update_idletasks()
         px, py = parent.winfo_x(), parent.winfo_y()
         pw, ph = parent.winfo_width(), parent.winfo_height()
-        self.geometry(f"+{px + (pw // 2) - 210}+{py + (ph // 2) - 170}")
+        self.geometry(f"+{px + (pw // 2) - 240}+{py + (ph // 2) - 230}")
 
         self.grid_columnconfigure(0, weight=1)
 
+        # ── Header ──
         header = ctk.CTkFrame(self, fg_color="transparent")
-        header.grid(row=0, column=0, pady=(25, 5))
+        header.grid(row=0, column=0, pady=(20, 5))
         ctk.CTkLabel(header, text="⚡", font=("Roboto", 18)).pack(side="left", padx=(0, 8))
         ctk.CTkLabel(header, text="NEW SESSION", font=("Roboto", 18, "bold"), text_color=ACCENT_COLOR).pack(side="left")
 
-        ctk.CTkLabel(self, text="Configure your terminal session", font=("Roboto", 12), text_color=DIM_COLOR).grid(row=1, column=0, pady=(0, 15))
+        ctk.CTkLabel(self, text="Choose your shell type", font=("Roboto", 12), text_color=DIM_COLOR).grid(row=1, column=0, pady=(0, 12))
 
-        self.name_entry = ctk.CTkEntry(self, placeholder_text="Session Name", width=340, height=38, 
+        # ── 2x2 Card Grid ──
+        grid_frame = ctk.CTkFrame(self, fg_color="transparent")
+        grid_frame.grid(row=2, column=0, padx=30)
+        grid_frame.grid_columnconfigure(0, weight=1)
+        grid_frame.grid_columnconfigure(1, weight=1)
+
+        for idx, opt in enumerate(self.SHELL_OPTIONS):
+            row_pos = idx // 2
+            col_pos = idx % 2
+
+            is_disabled = (opt["key"] == "BASH" and not self.bash_path)
+
+            card = ctk.CTkFrame(grid_frame, fg_color=CARD_COLOR, border_width=2, 
+                                border_color=BORDER_COLOR, corner_radius=6, width=195, height=90)
+            card.grid(row=row_pos, column=col_pos, padx=5, pady=5, sticky="nsew")
+            card.grid_propagate(False)
+
+            inner = ctk.CTkFrame(card, fg_color="transparent")
+            inner.pack(fill="both", expand=True, padx=12, pady=10)
+
+            title_row = ctk.CTkFrame(inner, fg_color="transparent")
+            title_row.pack(fill="x")
+
+            icon_color = DIM_COLOR if is_disabled else TEXT_COLOR
+            ctk.CTkLabel(title_row, text=opt["icon"], font=("Roboto", 16), text_color=icon_color).pack(side="left", padx=(0, 6))
+            
+            title_color = DIM_COLOR if is_disabled else TEXT_COLOR
+            ctk.CTkLabel(title_row, text=opt["title"], font=("Roboto", 14, "bold"), text_color=title_color).pack(side="left")
+
+            desc_color = BORDER_COLOR if is_disabled else DIM_COLOR
+            desc_text = "Not installed" if is_disabled else opt["desc"]
+            ctk.CTkLabel(inner, text=desc_text, font=("Roboto", 11), text_color=desc_color, 
+                         justify="left", anchor="w").pack(fill="x", pady=(4, 0))
+
+            self.card_frames[opt["key"]] = card
+
+            if is_disabled:
+                ToolTip(card, "Git Bash not found. Install from git-scm.com")
+            else:
+                # Make card clickable
+                key = opt["key"]
+                for widget in [card, inner, title_row] + list(title_row.winfo_children()) + list(inner.winfo_children()):
+                    widget.bind("<Button-1>", lambda e, k=key: self._select_card(k))
+
+        # ── Session Name Entry ──
+        self.name_entry = ctk.CTkEntry(self, placeholder_text="Session Name", width=420, height=38,
                                        fg_color=BG_COLOR, border_color=BORDER_COLOR, corner_radius=2, font=("Roboto", 14))
+        self.name_entry.grid(row=3, column=0, pady=(15, 8))
 
+        session_num = len(parent.sessions) + 1
+        self.name_entry.insert(0, f"CMD Session {session_num}")
 
-
-
-        self.name_entry.insert(0, f"Session {len(parent.sessions) + 1}")
-        self.name_entry.grid(row=2, column=0, pady=8)
-
-        self.admin_var = ctk.BooleanVar(value=False)
-        self.admin_check = ctk.CTkCheckBox(self, text="  Run as Administrator", variable=self.admin_var,
-                                           fg_color=ACCENT_COLOR, hover=False, border_color=BORDER_COLOR,
-                                           font=("Roboto", 14))
-
-
-
-
-        self.admin_check.grid(row=3, column=0, pady=12)
-
-        self.shell_var = ctk.StringVar(value="CMD")
-        shell_frame = ctk.CTkFrame(self, fg_color="transparent")
-        shell_frame.grid(row=4, column=0, pady=4)
-        
-        ctk.CTkLabel(shell_frame, text="Shell Type:", font=("Roboto", 14)).grid(row=0, column=0, padx=10)
-        ctk.CTkRadioButton(shell_frame, text="CMD", variable=self.shell_var, value="CMD").grid(row=0, column=1, padx=5)
-        ctk.CTkRadioButton(shell_frame, text="PowerShell", variable=self.shell_var, value="PowerShell").grid(row=0, column=2, padx=5)
-        
-        bash_wrapper = ctk.CTkFrame(shell_frame, fg_color="transparent")
-        bash_wrapper.grid(row=0, column=3, padx=5)
-        self.bash_radio = ctk.CTkRadioButton(bash_wrapper, text="Git Bash", variable=self.shell_var, value="Git Bash")
-        self.bash_radio.pack()
-        
-        self.bash_path = find_git_bash()
-        if not self.bash_path:
-            self.bash_radio.configure(state="disabled")
-            ToolTip(bash_wrapper, "Git Bash not found. Install from gitscm.com")
-
+        # ── Buttons ──
         btn_frame = ctk.CTkFrame(self, fg_color="transparent")
-        btn_frame.grid(row=5, column=0, pady=(15, 25))
+        btn_frame.grid(row=4, column=0, pady=(8, 20), padx=30)
+        btn_frame.grid_columnconfigure(0, weight=1)
+        btn_frame.grid_columnconfigure(1, weight=1)
 
-        ctk.CTkButton(btn_frame, text="CANCEL", width=120, height=38, fg_color="transparent",
+        ctk.CTkButton(btn_frame, text="CANCEL", height=40, fg_color="transparent",
                       border_width=1, border_color=BORDER_COLOR, text_color=DIM_COLOR, corner_radius=2,
-                      hover=False, command=self.destroy).pack(side="left", padx=8)
+                      hover=False, command=self.destroy).grid(row=0, column=0, padx=5, sticky="ew")
 
-        ctk.CTkButton(btn_frame, text="⚡ CREATE", width=160, height=38, fg_color=ACCENT_COLOR,
+        ctk.CTkButton(btn_frame, text="⚡ CREATE SESSION", height=40, fg_color=ACCENT_COLOR,
                       hover=False, text_color=BG_COLOR, font=("Roboto", 14, "bold"),
+                      corner_radius=2, command=self._on_confirm).grid(row=0, column=1, padx=5, sticky="ew")
 
-                      corner_radius=2, command=self._on_confirm).pack(side="left", padx=8)
+        # Highlight default selection
+        self._select_card("CMD")
 
-
-
+    def _select_card(self, key):
+        self.selected_key = key
+        # Update border colors
+        for k, card in self.card_frames.items():
+            if k == key:
+                card.configure(border_color=ACCENT_COLOR)
+            else:
+                card.configure(border_color=BORDER_COLOR)
+        # Auto-fill name
+        session_num = len(self.parent.sessions) + 1
+        name_map = {"CMD": "CMD", "CMD_ADMIN": "Admin", "PS": "PowerShell", "BASH": "Git Bash"}
+        self.name_entry.delete(0, "end")
+        self.name_entry.insert(0, f"{name_map[key]} Session {session_num}")
 
     def _on_confirm(self):
         name = self.name_entry.get().strip() or "Session"
-        is_admin = self.admin_var.get()
-        shell_type = self.shell_var.get()
-        self.on_create(name, is_admin, shell_type, self.bash_path)
+        opt = next(o for o in self.SHELL_OPTIONS if o["key"] == self.selected_key)
+        is_admin = opt["is_admin"]
+        shell_type = opt["shell"]
+        self.on_create(name, is_admin, shell_type, self.bash_path, self.ps_path)
         self.destroy()
 
 
@@ -835,9 +909,9 @@ class Ariterminal(ctk.CTk):
     def open_new_session_dialog(self):
         NewSessionDialog(self, self.create_session)
 
-    def create_session(self, name, is_admin, shell_type="CMD", bash_path=None):
+    def create_session(self, name, is_admin, shell_type="CMD", bash_path=None, ps_path=None):
         session_id = f"sess_{datetime.now().timestamp()}"
-        new_session = Session(session_id, name, is_admin, self.cwd, shell_type, bash_path)
+        new_session = Session(session_id, name, is_admin, self.cwd, shell_type, bash_path, ps_path)
         self.sessions[session_id] = new_session
         self.switch_to_session(session_id)
         self.write_log(f"━━━ SESSION STARTED: {name} {'(ADMIN)' if is_admin else ''} ━━━", "cyan")
@@ -917,7 +991,7 @@ class Ariterminal(ctk.CTk):
         if not s_id or s_id not in self.sessions: return
         old = self.sessions[s_id]
         session_id = f"sess_{datetime.now().timestamp()}"
-        new_session = Session(session_id, f"{old.name} (Copy)", old.is_admin, self.cwd, old.shell_type, old.bash_path)
+        new_session = Session(session_id, f"{old.name} (Copy)", old.is_admin, self.cwd, old.shell_type, old.bash_path, old.ps_path)
         new_session.logs = [log.copy() for log in old.logs]
         new_session.log_count = old.log_count
         new_session.group = old.group
@@ -981,7 +1055,8 @@ class Ariterminal(ctk.CTk):
                 popen_args = [session.bash_path, "--login", "-i", "-c", cmd]
                 process = subprocess.Popen(popen_args, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, cwd=session.cwd)
             elif session.shell_type == "PowerShell":
-                popen_args = ["powershell.exe", "-Command", cmd]
+                ps_exe = session.ps_path or "powershell.exe"
+                popen_args = [ps_exe, "-Command", cmd]
                 process = subprocess.Popen(popen_args, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, cwd=session.cwd)
             else:
                 process = subprocess.Popen(cmd, shell=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, cwd=session.cwd)
